@@ -1,97 +1,77 @@
-# https://github.com/cloneofsimo/minDiffusion/blob/master/mindiffusion/ddpm.py
-from typing import Dict, Tuple
-
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
 
 
 class DDPM(nn.Module):
-    def __init__(
-            self,
-            eps_model: nn.Module,
-            betas: Tuple[float, float],
-            n_T: int,
-            criterion: nn.Module = nn.MSELoss(),
-    ) -> None:
-        super(DDPM, self).__init__()
-        self.eps_model = eps_model
+    def __init__(self, network,
+                 n_steps=1000,
+                 min_beta=1e-4,
+                 max_beta=1e-2,
+                 device=None,
+                 image_chw=(3, 32, 32)):
+        super().__init__()
+        self.n_T = n_steps
+        self.device = device
+        self.image_chw = image_chw
+        self.network = network.to(device)
+        self.betas = torch.linspace(min_beta, max_beta, self.n_T).to(device)
+        self.alphas = (1 - self.betas)
+        self.alpha_bars = (1 - self.betas).cumprod(axis=0)
 
-        # register_buffer allows us to freely access these tensors by name. It helps device placement.
-        for k, v in ddpm_schedules(betas[0], betas[1], n_T).items():
-            self.register_buffer(k, v)
+    def forward(self, x0, t, eta=None):
+        # Прямой проход диффузии (детерменированный марковский процесс)
+        # :param x0 - исходная картинка (тензор формы [B,C,H,W])
+        # :param t - шаг зашумления (тензор формы [B,1])
+        # :param eta - \epsilon_t - добавочный шум на шаге зашумления t (тензор формы [B,C,H,W])
 
-        self.n_T = n_T
-        self.criterion = criterion
+        if eta is None:
+            eta = torch.randn_like(x0)  # если шум не определен - инициализируйте его гауссом N(0,1) сами
+        alpha_t = self.alpha_bars[t][:, None, None, None]
+        noised_x = x0 * (alpha_t ** 0.5) + eta * (1 - alpha_t) ** 0.5
+        return noised_x
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Makes forward diffusion x_t, and tries to guess epsilon value from x_t using eps_model.
-        This implements Algorithm 1 in the paper.
-        """
+    def backward(self, x, t, guide_w=None):
+        # Обратный процесс. Здесь вам предстоит восстановить добавочный шум eta из зашумлённой картинки x на шаге t нейросетью
+        eta_pred = self.network(x, t)
+        return eta_pred
 
-        _ts = torch.randint(1, self.n_T + 1, (x.shape[0],)).to(x.device)
-        # t ~ Uniform(0, n_T)
-        eps = torch.randn_like(x)  # eps ~ N(0, 1)
+    def sample(self, n_samples, size, x=None, guide_w=None):
+        # Starting from random noise
+        c, h, w = size
+        if x is None:
+            x = torch.randn([n_samples, c, h, w]).to(
+                self.device)  # Начинаем генерить картинки с гауссовского шума N(0,1) ([n_samples, c, h, w])
 
-        x_t = (
-                self.sqrtab[_ts, None, None, None] * x
-                + self.sqrtmab[_ts, None, None, None] * eps
-        )  # This is the x_t, which is sqrt(alphabar) x_0 + sqrt(1-alphabar) * eps
-        # We should predict the "error term" from this x_t. Loss is what we return.
+        for idx, t in enumerate(
+                range(self.n_T - 1, -1, -1)):  # Денойзим наши картинки для каждого шага, начиная с последнего
+            # Estimating noise to be removed
+            time_tensor = torch.tensor([t] * n_samples).reshape(-1, 1).long().to(self.device)  # [n_samples, 1].long()
+            eta_theta = self.backward(x, time_tensor.reshape(-1))  # Предсказываем добавочный шум нейросетью
 
-        return self.criterion(eps, self.eps_model(x_t, _ts / self.n_T))
+            alpha_t = self.alphas[time_tensor][:, :, None, None]
+            alpha_t_bar = self.alpha_bars[time_tensor][:, :, None, None]
+            beta_t = self.betas[time_tensor][:, :, None, None]
+            alpha_t_m1_bar = self.alpha_bars[time_tensor - 1][:, :, None, None]
 
-    def sample(self, n_sample: int, size, device) -> torch.Tensor:
+            x = (x - (1 - alpha_t) / (1 - alpha_t_bar) ** 0.5 * eta_theta) / (
+                        alpha_t ** 0.5)  # Вычитаем добавочный шум из картинки
+            if t > 0:
+                z = torch.randn(n_samples, c, h, w).to(self.device)
+                sigma_t = ((1 - alpha_t_m1_bar) / (
+                            1 - alpha_t_bar) * beta_t) ** 0.5  # определите сигму по любому из предлагаемых DDPM способов
+                x = x + sigma_t * z
+        return x
 
-        x_i = torch.randn(n_sample, *size).to(device)  # x_T ~ N(0, 1)
-
-        # This samples accordingly to Algorithm 2. It is exactly the same logic.
-        for i in range(self.n_T, 0, -1):
-            z = torch.randn(n_sample, *size).to(device) if i > 1 else 0
-            eps = self.eps_model(x_i, torch.tensor(i / self.n_T).to(device).repeat(n_sample, 1))
-            x_i = (self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i]) + self.sqrt_beta_t[i] * z)
-
+    def backward_dif(self, noise):
+        n_sample = noise.shape[0]
+        size = noise.shape[1:]
+        device = noise.device
+        x_i = self.sample(n_sample, size, x=noise)
         return x_i
 
-
-class DDPMForward:
-    def __init__(self, betas, n_T):
-        sch = ddpm_schedules(betas[0], betas[1], n_T)
-        self.sqrtab = sch['sqrtab']
-        self.sqrtmab = sch['sqrtmab']
-        self.n_T = n_T
-
-    def forward(self, x, t):
-        eps = torch.randn_like(x)  # eps ~ N(0, 1)
-        x_t = (self.sqrtab[t, None, None, None] * x + self.sqrtmab[t, None, None, None] * eps)
-        return x_t
-
-
-def ddpm_schedules(beta1: float, beta2: float, T: int) -> Dict[str, torch.Tensor]:
-    """
-    Returns pre-computed schedules for DDPM sampling, training process.
-    """
-    assert beta1 < beta2 < 1.0, "beta1 and beta2 must be in (0, 1)"
-
-    beta_t = (beta2 - beta1) * torch.arange(0, T + 1, dtype=torch.float32) / T + beta1
-    sqrt_beta_t = torch.sqrt(beta_t)
-    alpha_t = 1 - beta_t
-    log_alpha_t = torch.log(alpha_t)
-    alphabar_t = torch.cumsum(log_alpha_t, dim=0).exp()
-
-    sqrtab = torch.sqrt(alphabar_t)
-    oneover_sqrta = 1 / torch.sqrt(alpha_t)
-
-    sqrtmab = torch.sqrt(1 - alphabar_t)
-    mab_over_sqrtmab_inv = (1 - alpha_t) / sqrtmab
-
-    return {
-        "alpha_t": alpha_t,  # \alpha_t
-        "oneover_sqrta": oneover_sqrta,  # 1/\sqrt{\alpha_t}
-        "sqrt_beta_t": sqrt_beta_t,  # \sqrt{\beta_t}
-        "alphabar_t": alphabar_t,  # \bar{\alpha_t}
-        "sqrtab": sqrtab,  # \sqrt{\bar{\alpha_t}}
-        "sqrtmab": sqrtmab,  # \sqrt{1-\bar{\alpha_t}}
-        "mab_over_sqrtmab": mab_over_sqrtmab_inv,  # (1-\alpha_t)/\sqrt{1-\bar{\alpha_t}}
-    }
+    def compute_x0(self, x_t, timestep, guide_w=None):
+        # computes x0 from x_t
+        eps = self.backward(x_t, timestep)
+        alpha_t = self.alpha_bars[timestep][:, None, None, None]
+        x0 = (x_t - (1 - alpha_t) ** 0.5 * eps) / (alpha_t ** 0.5)
+        return x0
