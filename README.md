@@ -4,7 +4,7 @@ This is an amateur implementation of "One-step Diffusion with Distribution Match
 
 There are multiple approaches made by: Grishina Ekaterina, Ulyana Klyuchnikova, Maxim Bekoev
 
-You can see results and hyperparameter settings in our presentation.
+You can run the distillation process using main.py. We have published our notebooks in the corresponding folder to demonstrate how to use it. You can see our results and hyperparameter settings in our presentation.
 
 ## MNIST
 We have taken pretrained model from `https://github.com/TeaPearce/Conditional_Diffusion_MNIST`.
