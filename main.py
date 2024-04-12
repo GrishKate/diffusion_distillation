@@ -16,7 +16,7 @@ def main():
         "--model_name",
         type=str,
         default="ddpm_conditional_mnist",
-        choices=["ddpm_conditional_mnist", "ddpm", "ddmp_unconditional_celeba"],
+        choices=["ddpm_conditional_mnist", "ddpm_cifar", "ddmp_unconditional_celeba"],
     )
     parser.add_argument(
         "--pretrained_weights", type=str, default="/content/model_39.pth"
@@ -89,7 +89,7 @@ def main():
             drop_prob=args.drop_prob,
         )
         netG.load_state_dict(checkpoint)
-    elif args.model_name == "ddpm":
+    elif args.model_name == "ddpm_unconditional_celeba":
         checkpoint = torch.load(args.pretrained_weights, map_location=device)
         mu_real = DDPM(
             UNet(args.n_T),
@@ -116,12 +116,8 @@ def main():
             device=device,
         )
         netG.load_state_dict(checkpoint)
-    elif args.model_name == "ddmp_unconditional_celeba":
+    elif args.model_name == "ddmp_cifar":
         from diffusers import UNet2DModel, DDPMScheduler
-
-        args.n_T = 1000
-        args.path_noise = "/content/GeneratedByDDPMCifarPairs/noise"
-        args.path_images = "/content/GeneratedByDDPMCifarPairs/images"
         hugging_face_id = "google/ddpm-cifar10-32"
         pretrained_unet = UNet2DModel.from_pretrained(hugging_face_id)
         scheduler = DDPMScheduler.from_config(hugging_face_id)

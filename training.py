@@ -51,8 +51,8 @@ def train(args, forward_diffusion, mu_real, mu_fake, netG, ref_loader):
                 # generate images
                 z_ref, y_ref = z_ref.to(device), y_ref.to(device)
                 z = torch.randn_like(z_ref, device=device)
-                x = netG.compute_x0(z, torch.full((z.shape[0],), netG.n_T, device=device), args.guide_w)
-                x_ref = netG.compute_x0(z_ref, torch.full((z.shape[0],), netG.n_T, device=device), args.guide_w)
+                x = netG.compute_x0(z, torch.full((z.shape[0],), netG.n_T - 1, device=device), args.guide_w)
+                x_ref = netG.compute_x0(z_ref, torch.full((z.shape[0],), netG.n_T - 1, device=device), args.guide_w)
                 # update generator
                 loss_kl = distribution_matching_loss(mu_real, mu_fake, x, int(args.T * 0.02), int(args.T * 0.98),
                                                      args.batch_size, forward_diffusion, args.guide_w)
@@ -64,7 +64,7 @@ def train(args, forward_diffusion, mu_real, mu_fake, netG, ref_loader):
                 # Update fake score estimation model
                 x = x.detach()
                 noise = torch.randn_like(x)
-                t = torch.randint(1, args.T + 1, (x.shape[0],)).to(device)
+                t = torch.randint(1, netG.n_T - 1, (x.shape[0],)).to(device)
                 x_t = forward_diffusion(x, t, noise)
                 # predict noise injected to x_t and calculate loss
                 loss_denoise = denoising_loss(mu_fake.backward(x_t, t, args.guide_w), noise)

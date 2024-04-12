@@ -1,9 +1,6 @@
 import torch
 import os
-from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Dataset
-import torchvision.transforms as transforms
-from PIL import Image
 import tqdm
 
 
@@ -13,7 +10,6 @@ def generate_noise_img_pairs(
     path_images,
     shape=(64, 3, 32, 32),
     batches_num=100,
-    denormalize=None,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
 ):
     # generated dataset of noise-image pairs for reg loss
@@ -30,14 +26,13 @@ def generate_noise_img_pairs(
             torch.save(images.detach().cpu(), path_images + "/{}.pt".format(i))
 
 
-def generate_noise_img_pairs_celeba(
+def generate_noise_img_pairs_cifar(
     model,
     scheduler,
     path_noise,
     path_images,
     batch_size=64,
     batches_num=100,
-    denormalize=None,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     batches_start_with=0,
 ):
@@ -93,9 +88,8 @@ class MyDataset(Dataset):
         return length
 
 
-def make_ref_loader(
-    path_noise, path_images, batch_size, tf=None
-):  # paths to noise-image pairs
+def make_ref_loader(path_noise, path_images, batch_size, tf=None):
+    # input: paths to noise-image pairs
     # return: dataloader of noise-image pairs
     dataset = MyDataset(path_noise, path_images, tf)
     loader = DataLoader(
