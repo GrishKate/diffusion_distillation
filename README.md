@@ -9,7 +9,7 @@ You can run the distillation process using main.py. We have published our notebo
 ## MNIST
 We have taken pretrained model from `https://github.com/TeaPearce/Conditional_Diffusion_MNIST`.
 
-- The code for distillation is in `notebooks/celeba_distillation.ipynb`, just switch args.model to 'ddpm_conditional_mnist'
+- The code for distillation is in `notebooks/celeba_distillation.ipynb`, just switch parameter 'model_name' to 'ddpm_conditional_mnist'
 
 Our one-step generation result:
 <img src="https://github.com/GrishKate/diffusion_distillation/blob/main/imgs/1_step.png" />
